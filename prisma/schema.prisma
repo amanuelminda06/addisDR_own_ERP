@@ -1,0 +1,721 @@
+// AddisDR ERP — Prisma schema.
+// Single-tenant by design (one owner). See README for the multi-tenant note.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Authentication / settings
+// ---------------------------------------------------------------------------
+
+model User {
+  id                         String   @id @default(cuid())
+  username                   String   @unique
+  email                      String   @unique
+  passwordHash               String
+  name                       String
+  timezone                   String   @default("Africa/Addis_Ababa")
+  currency                   String   @default("ETB")
+  monthlyAllowance           Decimal  @default(30000) @db.Decimal(14, 2)
+  accountabilityPartnerName  String?
+  accountabilityPartnerEmail String?
+  createdAt                  DateTime @default(now())
+  updatedAt                  DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Commercial management
+// ---------------------------------------------------------------------------
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  QUALIFIED
+  PROPOSAL
+  NEGOTIATION
+  WON
+  LOST
+}
+
+enum LeadPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+model Lead {
+  id              String       @id @default(cuid())
+  name            String
+  contactName     String?
+  company         String?
+  email           String?
+  phone           String?
+  category        String?
+  area            String?
+  address         String?
+  source          String?
+  status          LeadStatus   @default(NEW)
+  priority        LeadPriority @default(MEDIUM)
+  estimatedValue  Decimal?     @db.Decimal(14, 2)
+  probability     Int?         @default(0)
+  expectedCloseAt DateTime?
+  nextAction      String?
+  nextActionAt    DateTime?
+  lostReason      String?
+  notes           String?
+  lastContactedAt DateTime?
+  nextFollowUpAt  DateTime?
+  convertedAt     DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  marketingActivityId String?
+  marketingActivity   MarketingActivity? @relation(fields: [marketingActivityId], references: [id], onDelete: SetNull)
+
+  interactions Interaction[]
+  milestones   CommunicationMilestone[]
+  followUps    FollowUp[]
+  client       Client?
+  projects     Project[]
+
+  @@index([status])
+  @@index([priority])
+  @@index([status, priority])
+  @@index([nextFollowUpAt])
+  @@index([expectedCloseAt])
+  @@index([marketingActivityId])
+}
+
+// Ordered communication checkpoints reached on a lead's journey.
+enum MilestoneStage {
+  FIRST_CONTACT
+  NEEDS_ASSESSMENT
+  PROPOSAL_SENT
+  FOLLOW_UP
+  NEGOTIATION
+  DECISION
+  CONTRACT
+}
+
+model CommunicationMilestone {
+  id        String         @id @default(cuid())
+  leadId    String
+  lead      Lead           @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  stage     MilestoneStage
+  notes     String?
+  reachedAt DateTime       @default(now())
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  @@unique([leadId, stage])
+  @@index([leadId])
+  @@index([reachedAt])
+}
+
+enum FollowUpStatus {
+  SCHEDULED
+  COMPLETED
+  CANCELLED
+}
+
+// A sales follow-up obligation. Scheduling one creates exactly one linked
+// Reminder (relatedType "FollowUp"); rescheduling updates it rather than
+// creating another, so lead edits never double-create reminders.
+model FollowUp {
+  id          String         @id @default(cuid())
+  leadId      String
+  lead        Lead           @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  dueAt       DateTime
+  channel     ContactType    @default(CALL)
+  purpose     String?
+  notes       String?
+  status      FollowUpStatus @default(SCHEDULED)
+  completedAt DateTime?
+  outcome     String?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  reschedules FollowUpReschedule[]
+
+  @@index([leadId])
+  @@index([dueAt])
+  @@index([status])
+}
+
+model FollowUpReschedule {
+  id            String   @id @default(cuid())
+  followUpId    String
+  followUp      FollowUp @relation(fields: [followUpId], references: [id], onDelete: Cascade)
+  fromDueAt     DateTime
+  toDueAt       DateTime
+  reason        String?
+  rescheduledAt DateTime @default(now())
+
+  @@index([followUpId])
+}
+
+enum ContactType {
+  NOTE
+  CALL
+  EMAIL
+  MEETING
+  MESSAGE
+}
+
+model Interaction {
+  id         String      @id @default(cuid())
+  type       ContactType @default(NOTE)
+  summary    String
+  notes      String?
+  occurredAt DateTime    @default(now())
+  createdAt  DateTime    @default(now())
+
+  leadId   String?
+  lead     Lead?   @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  clientId String?
+  client   Client? @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([leadId])
+  @@index([clientId])
+  @@index([occurredAt])
+}
+
+model Client {
+  id          String    @id @default(cuid())
+  name        String
+  company     String?
+  email       String?
+  phone       String?
+  area        String?
+  address     String?
+  notes       String?
+  convertedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  leadId         String?        @unique
+  lead           Lead?          @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  projects       Project[]
+  interactions   Interaction[]
+  financeEntries FinanceEntry[]
+
+  @@index([name])
+}
+
+// ---------------------------------------------------------------------------
+// Projects
+// ---------------------------------------------------------------------------
+
+enum ProjectStatus {
+  PLANNED
+  ACTIVE
+  ON_HOLD
+  COMPLETED
+  CANCELLED
+}
+
+model Project {
+  id          String        @id @default(cuid())
+  name        String
+  description String?
+  status      ProjectStatus @default(PLANNED)
+  budget      Decimal?      @db.Decimal(14, 2)
+  startDate   DateTime?
+  endDate     DateTime?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  clientId String?
+  client   Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  leadId   String?
+  lead     Lead?   @relation(fields: [leadId], references: [id], onDelete: SetNull)
+
+  tasks               Task[]
+  financeEntries      FinanceEntry[]
+  businessInvestments BusinessInvestment[]
+
+  @@index([status])
+}
+
+// ---------------------------------------------------------------------------
+// Marketing
+// ---------------------------------------------------------------------------
+
+enum MarketingStatus {
+  PLANNED
+  ACTIVE
+  PAUSED
+  COMPLETED
+  CANCELLED
+}
+
+enum MarketingChannel {
+  REFERRAL
+  SOCIAL_MEDIA
+  EMAIL
+  EVENT
+  CONTENT
+  PAID_ADS
+  DIRECT
+  PARTNERSHIP
+  OTHER
+}
+
+model MarketingActivity {
+  id          String           @id @default(cuid())
+  name        String
+  channel     MarketingChannel @default(OTHER)
+  status      MarketingStatus  @default(PLANNED)
+  objective   String?
+  targetLeads Int?
+  budget      Decimal?         @db.Decimal(14, 2)
+  spend       Decimal?         @db.Decimal(14, 2)
+  startDate   DateTime?
+  endDate     DateTime?
+  notes       String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  leads Lead[]
+
+  @@index([status])
+  @@index([channel])
+}
+
+// ---------------------------------------------------------------------------
+// Daily work sessions & weekly planning
+// ---------------------------------------------------------------------------
+
+enum WorkSessionStatus {
+  PLANNED
+  IN_PROGRESS
+  COMPLETED
+  MISSED
+  RESCHEDULED
+}
+
+model WorkSession {
+  id             String            @id @default(cuid())
+  date           DateTime
+  sessionNumber  Int
+  plannedStart   String?
+  plannedEnd     String?
+  plannedMinutes Int               @default(180)
+  actualMinutes  Int?
+  location       String?
+  focus          String?
+  status         WorkSessionStatus @default(PLANNED)
+  startedAt      DateTime?
+  completedAt    DateTime?
+  notes          String?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  weekPlanId String?
+  weekPlan   WeekPlan? @relation(fields: [weekPlanId], references: [id], onDelete: SetNull)
+
+  @@unique([date, sessionNumber])
+  @@index([date])
+  @@index([status])
+}
+
+enum WeekPlanStatus {
+  DRAFT
+  ACTIVE
+  SUBMITTED
+  ARCHIVED
+}
+
+model WeekPlan {
+  id                  String         @id @default(cuid())
+  weekStart           DateTime       @unique
+  weekEnd             DateTime
+  status              WeekPlanStatus @default(DRAFT)
+  objectives          String?
+  commercialTargets   String?
+  financialObjectives String?
+  workLocations       String?
+  lessonsLearned      String?
+  notes               String?
+  plannedAt           DateTime?
+  completedAt         DateTime?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+
+  tasks        Task[]
+  workSessions WorkSession[]
+  report       WeeklyReport?
+
+  @@index([weekStart])
+  @@index([status])
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  BLOCKED
+  DONE
+  CANCELLED
+}
+
+model Task {
+  id              String       @id @default(cuid())
+  title           String
+  description     String?
+  status          TaskStatus   @default(TODO)
+  priority        TaskPriority @default(MEDIUM)
+  isRequired      Boolean      @default(false)
+  estimateMinutes Int?
+  dueDate         DateTime?
+  completedAt     DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  projectId  String?
+  project    Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  weekPlanId String?
+  weekPlan   WeekPlan? @relation(fields: [weekPlanId], references: [id], onDelete: SetNull)
+
+  carriedFromId String?
+  carriedFrom   Task?   @relation("TaskCarryForward", fields: [carriedFromId], references: [id], onDelete: SetNull)
+  carriedTo     Task[]  @relation("TaskCarryForward")
+
+  @@index([status])
+  @@index([dueDate])
+  @@index([priority])
+  @@index([weekPlanId])
+}
+
+enum WeeklyReportStatus {
+  DRAFT
+  SUBMITTED
+  LATE
+}
+
+model WeeklyReport {
+  id             String             @id @default(cuid())
+  status         WeeklyReportStatus @default(DRAFT)
+  summary        String?
+  highlights     String?
+  challenges     String?
+  planVariance   String?
+  content        String?
+  recipientName  String?
+  recipientEmail String?
+  submittedAt    DateTime?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  weekPlanId String   @unique
+  weekPlan   WeekPlan @relation(fields: [weekPlanId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+}
+
+// ---------------------------------------------------------------------------
+// Finance
+// ---------------------------------------------------------------------------
+
+enum FinanceEntryType {
+  INCOME
+  EXPENSE
+}
+
+enum PaymentMethod {
+  CASH
+  BANK_TRANSFER
+  TELEBIRR
+  CBE_BIRR
+  MOBILE_MONEY
+  CARD
+  CHEQUE
+  OTHER
+}
+
+enum PaymentStatus {
+  PROJECTED
+  INVOICED
+  PARTIAL
+  RECEIVED
+  CANCELLED
+}
+
+enum ExpenseClass {
+  BUSINESS
+  PERSONAL
+}
+
+model FinanceEntry {
+  id           String           @id @default(cuid())
+  type         FinanceEntryType
+  category     String
+  amount       Decimal          @db.Decimal(14, 2)
+  currency     String           @default("ETB")
+  occurredAt   DateTime
+  description  String?
+  isReconciled Boolean          @default(false)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  paymentMethod  PaymentMethod?
+  paymentStatus  PaymentStatus  @default(RECEIVED)
+  expenseClass   ExpenseClass?
+  amountReceived Decimal?       @db.Decimal(14, 2)
+  reference      String?
+  notes          String?
+  dueDate        DateTime?
+  dedupeHash     String?        @unique
+
+  projectId String?
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  clientId  String?
+  client    Client?  @relation(fields: [clientId], references: [id], onDelete: SetNull)
+
+  businessInvestment BusinessInvestment?
+
+  @@index([type])
+  @@index([occurredAt])
+  @@index([projectId])
+  @@index([clientId])
+  @@index([paymentStatus])
+  @@index([expenseClass])
+}
+
+enum AllocationCategory {
+  TAX
+  TITHE
+  SAVINGS
+  BUSINESS
+  PERSONAL
+  OTHER
+}
+
+enum AllocationMethod {
+  FIXED
+  PERCENT
+}
+
+enum AllocationBasis {
+  GROSS
+  AFTER_TAX
+  AFTER_TAX_TITHE
+  AFTER_BUSINESS_EXPENSES
+  REMAINING
+}
+
+model FinancialAllocation {
+  id        String             @id @default(cuid())
+  category  AllocationCategory @unique
+  method    AllocationMethod   @default(PERCENT)
+  value     Decimal            @db.Decimal(14, 2)
+  basis     AllocationBasis    @default(GROSS)
+  sequence  Int                @default(0)
+  notes     String?
+  isActive  Boolean            @default(true)
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
+}
+
+enum SavingsFundType {
+  GENERAL
+  BUSINESS_STARTUP
+  LONG_TERM_INVESTMENT
+  EMERGENCY
+}
+
+model SavingsAccount {
+  id             String          @id @default(cuid())
+  fund           SavingsFundType @unique
+  name           String
+  openingBalance Decimal         @default(0) @db.Decimal(14, 2)
+  notes          String?
+  isActive       Boolean         @default(true)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  transactions SavingsTransaction[]
+}
+
+enum SavingsTransactionType {
+  CONTRIBUTION
+  WITHDRAWAL
+}
+
+model SavingsTransaction {
+  id         String                 @id @default(cuid())
+  fundId     String
+  fund       SavingsAccount         @relation(fields: [fundId], references: [id], onDelete: Cascade)
+  type       SavingsTransactionType
+  amount     Decimal                @db.Decimal(14, 2)
+  occurredAt DateTime
+  reason     String?
+  notes      String?
+  createdAt  DateTime               @default(now())
+
+  @@index([fundId])
+  @@index([occurredAt])
+  @@index([type])
+}
+
+model AllowanceAdjustment {
+  id          String   @id @default(cuid())
+  amount      Decimal  @db.Decimal(14, 2)
+  reason      String
+  startMonth  DateTime
+  monthsCount Int      @default(1)
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([startMonth])
+}
+
+enum InvestmentDecision {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum InvestmentStatus {
+  PLANNED
+  APPROVED
+  SPENT
+  COMPLETED
+  CANCELLED
+}
+
+model BusinessInvestment {
+  id              String             @id @default(cuid())
+  purpose         String
+  expectedBenefit String?
+  plannedAmount   Decimal            @db.Decimal(14, 2)
+  actualAmount    Decimal?           @db.Decimal(14, 2)
+  spendDate       DateTime?
+  decision        InvestmentDecision @default(PENDING)
+  status          InvestmentStatus   @default(PLANNED)
+  decidedAt       DateTime?
+  notes           String?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  projectId String?
+  project   Project?      @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  expenseId String?       @unique
+  expense   FinanceEntry? @relation(fields: [expenseId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([decision])
+  @@index([projectId])
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+}
+
+model AuditLog {
+  id         String      @id @default(cuid())
+  entityType String
+  entityId   String
+  action     AuditAction
+  summary    String
+  changes    Json?
+  actorEmail String?
+  createdAt  DateTime    @default(now())
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Reminders (centralized notification foundation)
+// ---------------------------------------------------------------------------
+
+enum ReminderType {
+  WORK_SESSION
+  TASK_REVIEW
+  SALES_FOLLOWUP
+  MEETING
+  WEEKLY_PLANNING
+  WEEKLY_REPORT
+  MISSING_REPORT
+  MONTHLY_PERFORMANCE
+  MONTHLY_FINANCE
+  SPENDING_LIMIT
+  DEADLINE
+  OVERDUE_TASK
+  CUSTOM
+}
+
+enum ReminderStatus {
+  PENDING
+  COMPLETED
+  OVERDUE
+  DISMISSED
+}
+
+enum ReminderChannel {
+  IN_APP
+  EMAIL
+  SMS
+}
+
+model Reminder {
+  id          String          @id @default(cuid())
+  type        ReminderType
+  title       String
+  description String?
+  dueAt       DateTime
+  status      ReminderStatus  @default(PENDING)
+  channel     ReminderChannel @default(IN_APP)
+  relatedType String?
+  relatedId   String?
+  completedAt DateTime?
+  dismissedAt DateTime?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  // One automatic reminder per obligation. `relatedId` is nullable, and
+  // Postgres treats NULLs as distinct, so manually-created reminders without a
+  // related record are unaffected. Combined with `createMany({ skipDuplicates })`
+  // this makes reminder generation duplicate-safe even under concurrent runs.
+  @@unique([type, relatedId])
+  @@index([status])
+  @@index([dueAt])
+  @@index([type])
+}
+
+// ---------------------------------------------------------------------------
+// Performance analysis (monthly reviews)
+// ---------------------------------------------------------------------------
+
+model PerformanceReview {
+  id                 String   @id @default(cuid())
+  periodStart        DateTime
+  periodEnd          DateTime
+  plannedSessions    Int?
+  completedSessions  Int?
+  taskCompletionRate Float?
+  notes              String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@unique([periodStart, periodEnd])
+  @@index([periodStart])
+}
