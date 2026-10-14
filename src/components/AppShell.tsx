@@ -47,7 +47,7 @@ export function AppShell({
       >
         <div className="flex h-16 items-center justify-between border-b border-slate-200 px-4">
           <Link href="/dashboard" className="flex items-center gap-2">
-            <span className="relative h-9 w-9 shrink-0">
+            <span className="relative h-14 w-14 shrink-0">
               <Image
                 src="/logo.png"
                 alt="AddisDR ERP"

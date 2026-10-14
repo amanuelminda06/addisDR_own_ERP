@@ -14,7 +14,7 @@ export function AuthLayout({
     <div className="flex min-h-screen items-center justify-center bg-slate-100 px-4 py-10">
       <div className="w-full max-w-md">
         <div className="mb-6 flex items-center justify-center gap-2">
-          <span className="relative h-11 w-11 shrink-0">
+          <span className="relative h-16 w-16 shrink-0">
             <Image
               src="/logo.png"
               alt="AddisDR ERP"
