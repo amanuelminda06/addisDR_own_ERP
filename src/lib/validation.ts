@@ -501,6 +501,70 @@ export const businessInvestmentExpenseSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
+// Partial payment tracking
+// ---------------------------------------------------------------------------
+
+export const PAYMENT_KINDS = ["INCOME", "EXPENSE"] as const;
+
+export const COLLECTION_STATUSES = [
+  "PENDING",
+  "PARTIAL",
+  "RECEIVED",
+  "OVERDUE",
+  "CANCELLED",
+] as const;
+
+export const projectPaymentSchema = z
+  .object({
+    projectId: z.string().min(1, "Project is required"),
+    amount: positiveMoney,
+    receivedAt: requiredDate,
+    paymentMethod: optionalPaymentMethod,
+    reference: optionalText(120),
+    notes: optionalText(2000),
+    createFinanceEntry: z.coerce.boolean().optional().default(true),
+  })
+  .superRefine((data, ctx) => {
+    if (!(data.amount > 0)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["amount"],
+        message: "Payment amount must be greater than zero",
+      });
+    }
+  });
+
+export const collectionScheduleSchema = z
+  .object({
+    projectId: z.string().min(1, "Project is required"),
+    label: z.string().trim().min(1, "Label is required").max(120),
+    expectedAmount: nonNegativeMoney,
+    expectedDate: requiredDate,
+    notes: optionalText(2000),
+  })
+  .superRefine((data, ctx) => {
+    if (!(data.expectedAmount > 0)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["expectedAmount"],
+        message: "Expected amount must be greater than zero",
+      });
+    }
+  });
+
+export const collectionScheduleUpdateSchema = z.object({
+  id: z.string().min(1),
+  status: z.enum(COLLECTION_STATUSES),
+});
+
+export const projectAgreedPriceSchema = z.object({
+  id: z.string().min(1),
+  agreedPrice: z
+    .union([z.literal(""), nonNegativeMoney])
+    .optional(),
+});
+
+// ---------------------------------------------------------------------------
 // Daily work & performance (Phase 4)
 // ---------------------------------------------------------------------------
 
@@ -671,4 +735,10 @@ export type MilestoneCreateInput = z.infer<typeof milestoneCreateSchema>;
 export type FollowUpCreateInput = z.infer<typeof followUpCreateSchema>;
 export type FollowUpRescheduleInput = z.infer<typeof followUpRescheduleSchema>;
 export type ConvertLeadInput = z.infer<typeof convertLeadSchema>;
+export type ProjectPaymentInput = z.infer<typeof projectPaymentSchema>;
+export type CollectionScheduleInput = z.infer<typeof collectionScheduleSchema>;
+export type CollectionScheduleUpdateInput = z.infer<
+  typeof collectionScheduleUpdateSchema
+>;
+export type ProjectAgreedPriceInput = z.infer<typeof projectAgreedPriceSchema>;
 export type MarketingActivityInput = z.infer<typeof marketingActivitySchema>;

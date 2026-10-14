@@ -633,6 +633,7 @@ export async function convertLeadToClientAction(
             `${lead.company ?? lead.name} project`,
           status: "PLANNED",
           budget: moneyOrNull(d.projectBudget) ?? undefined,
+          agreedPrice: moneyOrNull(d.projectBudget) ?? undefined,
           clientId: client.id,
           leadId: lead.id,
         },

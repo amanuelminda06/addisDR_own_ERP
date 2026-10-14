@@ -101,6 +101,9 @@ export async function getDashboardData() {
         id: true,
         name: true,
         budget: true,
+        agreedPrice: true,
+        payments: { select: { amount: true } },
+        collectionSchedule: { select: { id: true, expectedDate: true, status: true } },
         financeEntries: {
           where: { type: "INCOME" },
           select: { amount: true },
@@ -189,16 +192,38 @@ export async function getDashboardData() {
   ).length;
 
   // --- Projects --------------------------------------------------------------
-  const projectsWithRevenue = activeProjects.map((p) => ({
-    id: p.id,
-    name: p.name,
-    budget: toNumber(p.budget),
-    revenue: p.financeEntries.reduce((sum, e) => sum + toNumber(e.amount), 0),
-  }));
+  const projectsWithRevenue = activeProjects.map((p) => {
+    const agreedValue = toNumber(p.agreedPrice ?? p.budget);
+    const totalCollected = p.payments.reduce((sum, pay) => sum + toNumber(pay.amount), 0);
+    const outstanding = Math.max(agreedValue - totalCollected, 0);
+    return {
+      id: p.id,
+      name: p.name,
+      budget: agreedValue,
+      revenue: p.financeEntries.reduce((sum, e) => sum + toNumber(e.amount), 0),
+      collected: totalCollected,
+      outstanding,
+      overdueSchedules: p.collectionSchedule.filter(
+        (s) =>
+          s.status !== "RECEIVED" &&
+          s.status !== "CANCELLED" &&
+          new Date(s.expectedDate).getTime() < now.getTime(),
+      ).length,
+    };
+  });
   const activeProjectRevenue = projectsWithRevenue.reduce(
     (sum, p) => sum + p.revenue,
     0,
   );
+  const totalProjectReceivables = projectsWithRevenue.reduce(
+    (sum, p) => sum + p.outstanding,
+    0,
+  );
+  const overdueProjectReceivables = projectsWithRevenue.reduce(
+    (sum, p) => sum + p.collected * 0 + p.outstanding * (p.overdueSchedules > 0 ? 1 : 0),
+    0,
+  );
+
 
   // --- Finance ---------------------------------------------------------------
   const income = toNumber(incomeMonth._sum.amount);
@@ -277,6 +302,8 @@ export async function getDashboardData() {
     projects: {
       active: projectsWithRevenue,
       activeRevenue: activeProjectRevenue,
+      totalReceivables: totalProjectReceivables,
+      overdueReceivables: overdueProjectReceivables,
     },
     finance: {
       income,

@@ -546,6 +546,8 @@ export type ReminderTypeValue =
   | "SPENDING_LIMIT"
   | "DEADLINE"
   | "OVERDUE_TASK"
+  | "PROJECT_OUTSTANDING"
+  | "PROJECT_OVERDUE"
   | "CUSTOM";
 
 export type ReminderDraft = {
@@ -706,6 +708,8 @@ export const RECONCILABLE_REMINDER_TYPES: ReminderTypeValue[] = [
   "OVERDUE_TASK",
   "MISSING_REPORT",
   "WEEKLY_PLANNING",
+  "PROJECT_OVERDUE",
+  "PROJECT_OUTSTANDING",
 ];
 
 export type PendingReminder = {
@@ -729,6 +733,10 @@ export type ReminderFactSet = {
   deletedWeekPlanIds: string[];
   /** ISO week-start strings that now have a plan. */
   existingPlanStarts: string[];
+  /** Collection schedule ids that are still open and overdue. */
+  openOverdueScheduleIds?: string[];
+  /** Project ids that still have an outstanding collection balance. */
+  projectsOutstandingIds?: string[];
 };
 
 /**
@@ -746,6 +754,8 @@ export function planReminderResolutions(
   const submitted = new Set(facts.submittedWeekPlanIds);
   const deleted = new Set(facts.deletedWeekPlanIds);
   const planned = new Set(facts.existingPlanStarts);
+  const openSchedules = new Set(facts.openOverdueScheduleIds ?? []);
+  const outstandingProjects = new Set(facts.projectsOutstandingIds ?? []);
 
   const resolved: string[] = [];
   for (const reminder of pending) {
@@ -765,6 +775,12 @@ export function planReminderResolutions(
         break;
       case "WEEKLY_PLANNING":
         done = planned.has(relatedId);
+        break;
+      case "PROJECT_OVERDUE":
+        done = !openSchedules.has(relatedId);
+        break;
+      case "PROJECT_OUTSTANDING":
+        done = !outstandingProjects.has(relatedId);
         break;
       default:
         done = false;

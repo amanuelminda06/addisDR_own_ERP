@@ -228,6 +228,7 @@ model Project {
   description String?
   status      ProjectStatus @default(PLANNED)
   budget      Decimal?      @db.Decimal(14, 2)
+  agreedPrice Decimal?      @db.Decimal(14, 2)
   startDate   DateTime?
   endDate     DateTime?
   createdAt   DateTime      @default(now())
@@ -241,7 +242,80 @@ model Project {
   tasks               Task[]
   financeEntries      FinanceEntry[]
   businessInvestments BusinessInvestment[]
+  payments            ProjectPayment[]
+  collectionSchedule  CollectionSchedule[]
 
+  @@index([status])
+}
+
+// ---------------------------------------------------------------------------
+// Partial payment tracking
+// ---------------------------------------------------------------------------
+
+enum PaymentKind {
+  INCOME
+  EXPENSE
+}
+
+enum CollectionStatus {
+  PENDING
+  PARTIAL
+  RECEIVED
+  OVERDUE
+  CANCELLED
+}
+
+/**
+ * A confirmed payment received against a project. Each payment is recorded
+ * exactly once and is linked to the finance system via a FinanceEntry, so the
+ * same cash is never double-counted. Payments are *received* income only —
+ * they never include invoices or promised installments.
+ */
+model ProjectPayment {
+  id             String         @id @default(cuid())
+  projectId      String
+  amount         Decimal        @db.Decimal(14, 2)
+  currency       String         @default("ETB")
+  receivedAt     DateTime
+  paymentMethod  PaymentMethod?
+  reference      String?
+  notes          String?
+  financeEntryId String?        @unique
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  project        Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  financeEntry   FinanceEntry?   @relation(fields: [financeEntryId], references: [id], onDelete: SetNull)
+  milestones     CollectionSchedule[]
+
+  @@index([projectId])
+  @@index([receivedAt])
+  @@index([financeEntryId])
+}
+
+/**
+ * Expected collection milestones for a project. Supports projects with no
+ * fixed installment schedule (just an expected close date) as well as
+ * multi-installment projects. Each milestone generates at most one reminder.
+ */
+model CollectionSchedule {
+  id               String         @id @default(cuid())
+  projectId        String
+  label            String
+  expectedAmount   Decimal        @db.Decimal(14, 2)
+  expectedDate     DateTime
+  receivedAmount   Decimal        @default(0) @db.Decimal(14, 2)
+  status           CollectionStatus @default(PENDING)
+  paymentId        String?
+  notes            String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  project   Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  payment   ProjectPayment? @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+
+  @@index([projectId])
+  @@index([expectedDate])
   @@index([status])
 }
 
@@ -487,6 +561,7 @@ model FinanceEntry {
   client    Client?  @relation(fields: [clientId], references: [id], onDelete: SetNull)
 
   businessInvestment BusinessInvestment?
+  payments           ProjectPayment[]
 
   @@index([type])
   @@index([occurredAt])
@@ -660,6 +735,8 @@ enum ReminderType {
   SPENDING_LIMIT
   DEADLINE
   OVERDUE_TASK
+  PROJECT_OUTSTANDING
+  PROJECT_OVERDUE
   CUSTOM
 }
 

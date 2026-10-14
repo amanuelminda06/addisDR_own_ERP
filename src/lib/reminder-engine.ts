@@ -56,7 +56,7 @@ export async function generateReminders(
   const monthStart = startOfMonth(today);
   const previousMonthStart = addMonths(monthStart, -1);
 
-  const [incompleteSessions, overdueTasks, weekPlans, existing, nextWeekPlanCount] =
+  const [incompleteSessions, overdueTasks, weekPlans, existing, nextWeekPlanCount, projects] =
     await Promise.all([
       prisma.workSession.findMany({
         where: {
@@ -82,6 +82,26 @@ export async function generateReminders(
         select: { type: true, relatedId: true, status: true },
       }),
       prisma.weekPlan.count({ where: { weekStart: nextWeekStart } }),
+      prisma.project.findMany({
+        select: {
+          id: true,
+          name: true,
+          status: true,
+          budget: true,
+          agreedPrice: true,
+          payments: { select: { amount: true } },
+          collectionSchedule: {
+            select: {
+              id: true,
+              label: true,
+              expectedAmount: true,
+              expectedDate: true,
+              status: true,
+              receivedAmount: true,
+            },
+          },
+        },
+      }),
     ]);
 
   // A week's report is due on its reporting Saturday; it stays "missing" until a
@@ -120,6 +140,23 @@ export async function generateReminders(
       status: e.status,
     })),
   });
+
+  // Project collection reminders. These are keyed by project/schedule so the
+  // same (type, relatedId) never duplicates.
+  drafts.push(
+    ...buildProjectCollectionReminders(
+      projects.map((project) => ({
+        id: project.id,
+        name: project.name,
+        status: project.status,
+        agreedPrice: project.agreedPrice,
+        budget: project.budget,
+        payments: project.payments,
+        collectionSchedule: project.collectionSchedule,
+      })),
+      now,
+    ),
+  );
 
   let created = 0;
   if (drafts.length > 0) {
@@ -186,43 +223,75 @@ async function reconcileReminders(now: Date): Promise<number> {
         .map((r) => r.relatedId as string),
     ),
   ];
+  const scheduleIds = [
+    ...new Set(
+      pending
+        .filter((r) => r.type === "PROJECT_OVERDUE" && r.relatedId)
+        .map((r) => r.relatedId as string),
+    ),
+  ];
+  const projectIds = [
+    ...new Set(
+      pending
+        .filter((r) => r.type === "PROJECT_OUTSTANDING" && r.relatedId)
+        .map((r) => r.relatedId as string),
+    ),
+  ];
 
   const sessionDates = sessionDays.map((d) => new Date(`${d}T00:00:00.000Z`));
   const planStartDates = planStartKeys
     .map((s) => new Date(s))
     .filter((d) => !Number.isNaN(d.getTime()));
 
-  const [openSessions, openTasks, reportPlans, plannedAt] = await Promise.all([
-    sessionDates.length > 0
-      ? prisma.workSession.findMany({
-          where: {
-            status: { in: [...OPEN_SESSION_STATUSES] },
-            date: { in: sessionDates },
-          },
-          select: { date: true },
-        })
-      : Promise.resolve([] as { date: Date }[]),
-    taskIds.length > 0
-      ? prisma.task.findMany({
-          where: { id: { in: taskIds } },
-          select: { id: true, status: true, dueDate: true },
-        })
-      : Promise.resolve([] as { id: string; status: string; dueDate: Date | null }[]),
-    reportPlanIds.length > 0
-      ? prisma.weekPlan.findMany({
-          where: { id: { in: reportPlanIds } },
-          include: { report: { select: { status: true } } },
-        })
-      : Promise.resolve(
-          [] as { id: string; report: { status: string } | null }[],
-        ),
-    planStartDates.length > 0
-      ? prisma.weekPlan.findMany({
-          where: { weekStart: { in: planStartDates } },
-          select: { weekStart: true },
-        })
-      : Promise.resolve([] as { weekStart: Date }[]),
-  ]);
+  const [openSessions, openTasks, reportPlans, plannedAt, openSchedules, outstandingProjects] =
+    await Promise.all([
+      sessionDates.length > 0
+        ? prisma.workSession.findMany({
+            where: {
+              status: { in: [...OPEN_SESSION_STATUSES] },
+              date: { in: sessionDates },
+            },
+            select: { date: true },
+          })
+        : Promise.resolve([] as { date: Date }[]),
+      taskIds.length > 0
+        ? prisma.task.findMany({
+            where: { id: { in: taskIds } },
+            select: { id: true, status: true, dueDate: true },
+          })
+        : Promise.resolve([] as { id: string; status: string; dueDate: Date | null }[]),
+      reportPlanIds.length > 0
+        ? prisma.weekPlan.findMany({
+            where: { id: { in: reportPlanIds } },
+            include: { report: { select: { status: true } } },
+          })
+        : Promise.resolve(
+            [] as { id: string; report: { status: string } | null }[],
+          ),
+      planStartDates.length > 0
+        ? prisma.weekPlan.findMany({
+            where: { weekStart: { in: planStartDates } },
+            select: { weekStart: true },
+          })
+        : Promise.resolve([] as { weekStart: Date }[]),
+      scheduleIds.length > 0
+        ? prisma.collectionSchedule.findMany({
+            where: { id: { in: scheduleIds } },
+            select: { id: true, expectedDate: true, status: true },
+          })
+        : Promise.resolve([] as { id: string; expectedDate: Date; status: string }[]),
+      projectIds.length > 0
+        ? prisma.project.findMany({
+            where: { id: { in: projectIds } },
+            select: {
+              id: true,
+              budget: true,
+              agreedPrice: true,
+              payments: { select: { amount: true } },
+            },
+          })
+        : Promise.resolve([] as { id: string; budget: unknown; agreedPrice: unknown; payments: { amount: unknown }[] }[]),
+    ]);
 
   const facts: ReminderFactSet = {
     openSessionDays: [
@@ -249,6 +318,26 @@ async function reconcileReminders(now: Date): Promise<number> {
       (id) => !reportPlans.some((p) => p.id === id),
     ),
     existingPlanStarts: plannedAt.map((p) => p.weekStart.toISOString()),
+    openOverdueScheduleIds: openSchedules
+      .filter(
+        (s) =>
+          s.status !== "RECEIVED" &&
+          s.status !== "CANCELLED" &&
+          new Date(s.expectedDate).getTime() < now.getTime(),
+      )
+      .map((s) => s.id)
+      .concat(scheduleIds.filter((id) => !openSchedules.some((s) => s.id === id))),
+    projectsOutstandingIds: outstandingProjects
+      .filter((project) => {
+        const agreed = Number(project.agreedPrice ?? project.budget ?? 0);
+        const collected = project.payments.reduce(
+          (sum, payment) => sum + Number(payment.amount),
+          0,
+        );
+        return Math.max(agreed - collected, 0) > 0;
+      })
+      .map((project) => project.id)
+      .concat(projectIds.filter((id) => !outstandingProjects.some((p) => p.id === id))),
   };
 
   const resolvedIds = planReminderResolutions(pending, facts);
@@ -263,3 +352,86 @@ async function reconcileReminders(now: Date): Promise<number> {
 
 // Re-export for callers that reason about which reminders auto-resolve.
 export { RECONCILABLE_REMINDER_TYPES };
+
+
+export type ProjectCollectionReminderInput = {
+  id: string;
+  name: string;
+  status: string;
+  agreedPrice?: unknown;
+  budget?: unknown;
+  payments: { amount: unknown }[];
+  collectionSchedule: {
+    id: string;
+    label: string;
+    expectedAmount: unknown;
+    expectedDate: Date | string;
+    status: string;
+    receivedAmount?: unknown;
+  }[];
+};
+
+/**
+ * Pure helper: build project collection reminder drafts.
+ */
+export function buildProjectCollectionReminders(
+  projects: ProjectCollectionReminderInput[],
+  now: Date,
+): {
+  type: "PROJECT_OUTSTANDING" | "PROJECT_OVERDUE";
+  title: string;
+  description: string;
+  dueAt: Date;
+  relatedType: string;
+  relatedId: string;
+}[] {
+  const drafts: {
+    type: "PROJECT_OUTSTANDING" | "PROJECT_OVERDUE";
+    title: string;
+    description: string;
+    dueAt: Date;
+    relatedType: string;
+    relatedId: string;
+  }[] = [];
+  for (const project of projects) {
+    const agreedValue = Number(project.agreedPrice ?? project.budget ?? 0);
+    const collected = project.payments.reduce(
+      (sum, p) => sum + Number(p.amount),
+      0,
+    );
+    const outstanding = Math.max(agreedValue - collected, 0);
+    if (outstanding > 0) {
+      drafts.push({
+        type: "PROJECT_OUTSTANDING",
+        title: `Outstanding balance: ${project.name}`,
+        description:
+          project.status === "COMPLETED"
+            ? `This project is completed but ${outstanding.toFixed(2)} ETB is still owed.`
+            : `${outstanding.toFixed(2)} ETB is still owed on this project.`,
+        dueAt: new Date(now),
+        relatedType: "Project",
+        relatedId: project.id,
+      });
+    }
+    for (const schedule of project.collectionSchedule) {
+      if (schedule.status === "RECEIVED" || schedule.status === "CANCELLED") {
+        continue;
+      }
+      const expectedDate = new Date(schedule.expectedDate);
+      if (expectedDate.getTime() >= now.getTime()) continue;
+      const outstandingMilestone = Math.max(
+        Number(schedule.expectedAmount) - Number(schedule.receivedAmount ?? 0),
+        0,
+      );
+      drafts.push({
+        type: "PROJECT_OVERDUE",
+        title: `Overdue payment: ${project.name}`,
+        description: `${schedule.label} was expected ${expectedDate.toISOString().slice(0, 10)}${outstandingMilestone > 0 ? ` and ${outstandingMilestone.toFixed(2)} ETB is unpaid` : ""}.`,
+        dueAt: expectedDate,
+        relatedType: "CollectionSchedule",
+        relatedId: schedule.id,
+      });
+    }
+  }
+  return drafts;
+}

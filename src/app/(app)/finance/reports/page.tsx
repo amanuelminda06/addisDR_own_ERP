@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { formatCurrency } from "@/lib/currency";
+import { toNumber } from "@/lib/utils";
 import { requireUser } from "@/lib/auth";
 import { formatMonth, startOfMonth, zonedNow } from "@/lib/datetime";
 import {
@@ -24,7 +25,14 @@ export default async function FinanceReportsPage() {
   const [entries, projects] = await Promise.all([
     prisma.financeEntry.findMany({ select: financeEntrySelect }),
     prisma.project.findMany({
-      select: { id: true, name: true, budget: true },
+      select: {
+        id: true,
+        name: true,
+        budget: true,
+        agreedPrice: true,
+        payments: { select: { amount: true } },
+        collectionSchedule: { select: { status: true, expectedDate: true } },
+      },
       orderBy: { name: "asc" },
     }),
   ]);
@@ -126,6 +134,11 @@ export default async function FinanceReportsPage() {
                         {project.name}
                         {summary.overAgreed ? (
                           <span className="ml-2 text-xs text-red-500">over agreed</span>
+                        ) : null}
+                        {toNumber(project.agreedPrice ?? project.budget) > 0 &&
+                        project.payments.reduce((sum, p) => sum + toNumber(p.amount), 0) <
+                          toNumber(project.agreedPrice ?? project.budget) ? (
+                          <span className="ml-2 text-xs text-amber-600">balance open</span>
                         ) : null}
                       </td>
                       <td className="px-5 py-2 text-right tabular-nums text-slate-600">

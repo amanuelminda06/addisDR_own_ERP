@@ -1,4 +1,5 @@
 import { Icon } from "@/components/icons";
+import Image from "next/image";
 
 export function AuthLayout({
   title,
@@ -13,8 +14,14 @@ export function AuthLayout({
     <div className="flex min-h-screen items-center justify-center bg-slate-100 px-4 py-10">
       <div className="w-full max-w-md">
         <div className="mb-6 flex items-center justify-center gap-2">
-          <span className="grid h-11 w-11 place-items-center rounded-xl bg-brand-600 text-lg font-bold text-white">
-            A
+          <span className="relative h-11 w-11 shrink-0">
+            <Image
+              src="/logo.png"
+              alt="AddisDR ERP"
+              fill
+              className="rounded-xl object-contain"
+              priority
+            />
           </span>
           <div className="leading-tight">
             <p className="text-base font-semibold text-slate-800">AddisDR ERP</p>

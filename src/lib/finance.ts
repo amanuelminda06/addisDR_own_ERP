@@ -206,10 +206,11 @@ export function summarizeFinance(entries: FinanceEntryLike[]): FinanceSummary {
 
 export type ProjectLike = {
   budget?: unknown;
+  agreedPrice?: unknown;
 };
 
 export type ProjectFinancialSummary = {
-  /** `Project.budget` is the agreed project value. */
+  /** `Project.agreedPrice` (falling back to `Project.budget`) is the agreed project value. */
   agreedValue: number;
   received: number;
   invoiced: number;
@@ -226,7 +227,7 @@ export function projectFinancialSummary(
   project: ProjectLike,
   entries: FinanceEntryLike[],
 ): ProjectFinancialSummary {
-  const agreedValue = round2(project.budget);
+  const agreedValue = round2(project.agreedPrice ?? project.budget);
   const received = receivedIncome(entries);
   const invoiced = invoicedAmount(entries);
   const projected = projectedRevenue(entries);
@@ -242,6 +243,77 @@ export function projectFinancialSummary(
     netProfit: round2(received - expenses),
     remainingToInvoice: round2(Math.max(agreedValue - invoiced, 0)),
     overAgreed: invoiced > agreedValue,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Partial payment / collection tracking
+// ---------------------------------------------------------------------------
+
+export type ProjectPaymentLike = {
+  amount: unknown;
+  receivedAt?: Date | string | null;
+};
+
+export type CollectionScheduleLike = {
+  expectedAmount: unknown;
+  expectedDate: Date | string;
+  receivedAmount?: unknown;
+  status?: string | null;
+};
+
+export type ProjectCollectionSummary = {
+  agreedValue: number;
+  totalCollected: number;
+  outstandingBalance: number;
+  collectedPct: number;
+  isFullyPaid: boolean;
+  isOverpaid: boolean;
+  payments: number;
+  remainingMilestones: number;
+  overdueMilestones: number;
+};
+
+/**
+ * Summarize a project's collection position from its agreed price and the
+ * confirmed payments received. Only *received* cash counts — invoices and
+ * promised installments are never treated as collected income.
+ */
+export function summarizeProjectCollection(
+  project: ProjectLike,
+  payments: ProjectPaymentLike[],
+  milestones: CollectionScheduleLike[] = [],
+  now: Date = new Date(),
+): ProjectCollectionSummary {
+  const agreedValue = round2(project.agreedPrice ?? project.budget);
+  const totalCollected = round2(
+    payments.reduce((acc, p) => acc + round2(p.amount), 0),
+  );
+
+  const outstandingBalance = round2(Math.max(agreedValue - totalCollected, 0));
+  const collectedPct = agreedValue > 0 ? round2(totalCollected / agreedValue) : 0;
+
+  const remainingMilestones = milestones.filter(
+    (m) => (m.status ?? "PENDING") !== "RECEIVED" && (m.status ?? "PENDING") !== "CANCELLED",
+  ).length;
+
+  const overdueMilestones = milestones.filter(
+    (m) =>
+      (m.status ?? "PENDING") !== "RECEIVED" &&
+      (m.status ?? "PENDING") !== "CANCELLED" &&
+      new Date(m.expectedDate).getTime() < now.getTime(),
+  ).length;
+
+  return {
+    agreedValue,
+    totalCollected,
+    outstandingBalance,
+    collectedPct,
+    isFullyPaid: agreedValue > 0 && outstandingBalance <= 0,
+    isOverpaid: totalCollected > agreedValue,
+    payments: payments.length,
+    remainingMilestones,
+    overdueMilestones,
   };
 }
 

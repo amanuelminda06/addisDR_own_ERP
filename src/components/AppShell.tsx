@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { NAV_SECTIONS } from "@/lib/nav";
 import { cn } from "@/lib/utils";
@@ -46,8 +47,14 @@ export function AppShell({
       >
         <div className="flex h-16 items-center justify-between border-b border-slate-200 px-4">
           <Link href="/dashboard" className="flex items-center gap-2">
-            <span className="grid h-9 w-9 place-items-center rounded-lg bg-brand-600 text-sm font-bold text-white">
-              A
+            <span className="relative h-9 w-9 shrink-0">
+              <Image
+                src="/logo.png"
+                alt="AddisDR ERP"
+                fill
+                className="rounded-lg object-contain"
+                priority
+              />
             </span>
             <span className="flex flex-col leading-tight">
               <span className="text-sm font-semibold text-slate-800">

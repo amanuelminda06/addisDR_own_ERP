@@ -144,6 +144,8 @@ export const REMINDER_TYPE_LABELS: Record<ReminderType, string> = {
   SPENDING_LIMIT: "Spending limit",
   DEADLINE: "Deadline",
   OVERDUE_TASK: "Overdue task",
+  PROJECT_OUTSTANDING: "Project outstanding",
+  PROJECT_OVERDUE: "Project payment overdue",
   CUSTOM: "Custom",
 };
 

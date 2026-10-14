@@ -37,6 +37,7 @@ export default async function ProjectsPage() {
     include: {
       client: { select: { id: true, name: true } },
       lead: { select: { id: true, name: true } },
+      payments: { select: { amount: true } },
       financeEntries: {
         where: { type: "INCOME" },
         select: {
@@ -49,11 +50,17 @@ export default async function ProjectsPage() {
     },
   });
 
-  const rows = projects.map((p) => ({
+  const rows = projects.map((p) => {
+    const agreedValue = toNumber(p.agreedPrice ?? p.budget);
+    const collected = p.payments.reduce((sum, pay) => sum + toNumber(pay.amount), 0);
+    return {
     id: p.id,
     name: p.name,
     status: p.status,
-    budget: toNumber(p.budget),
+    budget: agreedValue,
+    agreedValue,
+    collected,
+    outstanding: Math.max(agreedValue - collected, 0),
     revenue: receivedIncome(p.financeEntries),
     clientName: p.client?.name ?? null,
     clientId: p.client?.id ?? null,
@@ -61,10 +68,12 @@ export default async function ProjectsPage() {
     leadId: p.lead?.id ?? null,
     startDate: p.startDate,
     endDate: p.endDate,
-  }));
+  };
+  });
 
   const totalRevenue = rows.reduce((s, p) => s + p.revenue, 0);
-  const totalBudget = rows.reduce((s, p) => s + p.budget, 0);
+  const totalBudget = rows.reduce((s, p) => s + p.agreedValue, 0);
+  const totalOutstandingReceivables = rows.reduce((s, p) => s + p.outstanding, 0);
   const activeCount = rows.filter((p) => p.status === "ACTIVE").length;
   const completedCount = rows.filter((p) => p.status === "COMPLETED").length;
 
@@ -72,7 +81,7 @@ export default async function ProjectsPage() {
     <div>
       <PageHeader
         title="Projects"
-        description="Client and internal projects with budgets and recorded revenue."
+        description={`Client and internal projects with agreed prices and collected balances. Outstanding receivables: ${formatCurrency(totalOutstandingReceivables, user.currency)}.`}
       />
 
       <section className="grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -122,6 +131,9 @@ export default async function ProjectsPage() {
                       </th>
                       <th className="px-4 py-3 text-right font-medium">
                         Received
+                      </th>
+                      <th className="px-4 py-3 text-right font-medium">
+                        Outstanding
                       </th>
                       <th className="px-4 py-3 text-right font-medium sm:px-5">
                         Timeline
@@ -177,6 +189,9 @@ export default async function ProjectsPage() {
                         </td>
                         <td className="px-4 py-3 text-right tabular-nums text-slate-600">
                           {formatCurrency(p.revenue, user.currency)}
+                        </td>
+                        <td className="px-4 py-3 text-right tabular-nums text-amber-700">
+                          {formatCurrency(p.outstanding, user.currency)}
                         </td>
                         <td className="px-4 py-3 text-right text-slate-500">
                           {p.startDate || p.endDate
